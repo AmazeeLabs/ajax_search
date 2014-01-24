@@ -1,0 +1,126 @@
+<?php
+/**
+ * @file
+ *   AJAX functionality for search forms.
+ */
+
+/**
+ * Implements hook_menu().
+ */
+function ajax_search_menu() {
+  $items = array();
+  $items['ajax-search'] = array(
+    'type' => MENU_CALLBACK,
+    'page callback' => 'ajax_search_ajax_search',
+    'access callback' => TRUE,
+  );
+  return $items;
+}
+
+/**
+ * Page callback for ajaxifying search pages.
+ *
+ * For example, if current request is "/ajax-search/en/cars", the function will
+ * run handler for "/en/cars" request and outputs the result as a JSON object.
+ */
+function ajax_search_ajax_search() {
+  global $_domain_variant;
+
+  $ajax_call = isset($_SERVER['HTTP_X_REQUESTED_WITH'])
+      && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) == 'xmlhttprequest';
+  if ($ajax_call) {
+    $ajax_search_active = &drupal_static('ajax_search_active');
+    $ajax_search_active = TRUE;
+  }
+
+  // Counterfeit request removing "ajax-search" prefix.
+  $original_request_uri = $_SERVER['REQUEST_URI'];
+  $_SERVER['REQUEST_URI'] = preg_replace('/.*?ajax-search\//i', '', $_SERVER['REQUEST_URI']);
+  $original_q = $_GET['q'];
+  $_GET['q'] = preg_replace('/.*?ajax-search\//i', '', $_GET['q']);
+  if (!empty($_domain_variant->prefix)) {
+    $_GET['q'] = preg_replace('/^' . $_domain_variant->prefix . '\//i', '', $_GET['q']);
+  }
+  list($language, $_GET['q']) = language_url_split_prefix($_GET['q'], language_list());
+  if ($language) {
+    $GLOBALS['language'] = $language;
+  }
+  if ($_GET['q'] === '') {
+    $_GET['q'] = $GLOBALS['base_path'];
+  }
+  drupal_path_initialize(); // Update $_GET['q'] to internal path.
+  drupal_static_reset('drupal_get_destination');
+
+  // Build url now: $_GET['q'] could be changed during handler execution.
+  $url = url($_GET['q'], array('absolute' => TRUE, 'query' => drupal_get_query_parameters()));
+
+  $output = menu_execute_active_handler(NULL, !$ajax_call);
+  if ($ajax_call) {
+    // If it was an ajax call, output json.
+    drupal_add_http_header('Content-Type', 'application/json; charset=utf-8');
+    $js = drupal_add_js();
+    print(drupal_json_encode(array(
+      'content' => is_array($output) ? drupal_render($output): $output,
+      'url' => $url,
+      'settings' => drupal_array_merge_deep_array($js['settings']['data']),
+      'messages' => theme('status_messages'),
+    )));
+    unset($_SESSION['messages']);
+  }
+
+  // Restore original request.
+  $_GET['q'] = $original_q;
+  $_SERVER['REQUEST_URI'] = $original_request_uri;
+  drupal_exit();
+}
+
+/**
+ * Implements hook_drupal_goto_alter().
+ */
+function ajax_search_drupal_goto_alter(&$path, &$options, &$http_response_code) {
+  global $language;
+
+  // Prevent ajax requests breaks.
+  if (drupal_static('ajax_search_active')) {
+    $path  = ltrim($path, '/');
+
+    // Also in this case "ajax-search/" could also present in the path.
+    if (strpos($path, 'ajax-search/') === 0) {
+      $path = substr($path, 12);
+    }
+
+    $path  = 'ajax-search/' . ltrim($path, '/');
+    if (empty($options['language'])) {
+      $options['language'] = $language;
+    }
+  }
+}
+
+/**
+ * Implements hook_preprocess_HOOK().
+ */
+function ajax_search_preprocess_html(&$html) {
+  $configurations = module_invoke_all('ajax_search_configurations');
+  if (empty($configurations)) {
+    return;
+  }
+  drupal_add_js(drupal_get_path('module', 'ajax_search') . '/js/ajax_search.js', array(
+    // Must be in the footer.
+    'scope' => 'footer',
+  ));
+  // If facetapi_pretty_paths is used - getting path from menu items is better,
+  // because it contains only real base path. If we have a placeholder in the
+  // menu item path, like "node/%", then get path from arg().
+  $menu_item = menu_get_item();
+  $path = (strpos($menu_item['path'], '%') === FALSE)
+      ? $menu_item['path'] : implode('/', arg());
+  drupal_add_js(array(
+    'ajaxSearch' => array(
+      'basePath' => drupal_is_front_page() ? '' : $path,
+      'basePathAlias' => drupal_is_front_page() ? '' : drupal_get_path_alias($path),
+      'configurations' => $configurations,
+      // todo (alex): make variable configurable via UI.
+      'historyApiOnly' => variable_get('ajax_search_history_api_only', TRUE),
+    ),
+  ), 'setting');
+}

@@ -1,0 +1,4 @@
+name = AJAX search
+description = Enable AJAX functionality for advanced search forms
+core = 7.x
+package = Custom Modules
