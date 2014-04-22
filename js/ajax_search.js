@@ -58,13 +58,15 @@
               $form.find('input[type="submit"]').each(function() {
                 $(this).once('ajax-search-prevent-other-ajax', function() {
                   var $submit = $(this);
-                  $.each($submit.data("events"), function(eventType, handlers) {
-                    $.each(handlers, function(key, handler) {
-                      if (handler.handler.toString().match(/return ajax\./gi)) {
-                        $submit.unbind(eventType, handler.handler);
-                      }
+                  if ($submit.data("events")) {
+                    $.each($submit.data("events"), function(eventType, handlers) {
+                      $.each(handlers, function(key, handler) {
+                        if (handler.handler.toString().match(/return ajax\./gi)) {
+                          $submit.unbind(eventType, handler.handler);
+                        }
+                      });
                     });
-                  });
+                  }
                 });
               });
             }
